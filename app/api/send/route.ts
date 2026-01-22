@@ -1,11 +1,16 @@
 import { NextRequest, NextResponse } from "next/server";
 import { sendEmail } from "@/lib/gmail";
 import type { StoredJob } from "@/lib/storage";
+import { recordSentEmails } from "@/lib/email-history";
 
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { job, sendAll } = body as { job: StoredJob; sendAll?: boolean };
+    const { job, sendAll, selectedEmails } = body as {
+      job: StoredJob;
+      sendAll?: boolean;
+      selectedEmails?: string[];
+    };
 
     if (!job || !job.tasks || job.tasks.length === 0) {
       return NextResponse.json(
@@ -14,14 +19,22 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // 选中的邮箱集合
+    const selectedSet = selectedEmails ? new Set(selectedEmails) : null;
+
     // 检查是否还有待发送的邮件
     const pendingTasks = job.tasks
       .map((task, index) => ({ task, index }))
-      .filter(({ task }) => task.status === "pending");
+      .filter(({ task }) => {
+        if (task.status !== "pending") return false;
+        // 如果提供了 selectedEmails，只包含选中的邮箱
+        if (selectedSet && !selectedSet.has(task.to)) return false;
+        return true;
+      });
 
     if (pendingTasks.length === 0) {
       return NextResponse.json(
-        { error: "所有邮件已发送完成" },
+        { error: selectedSet ? "请选择要发送的邮件" : "所有邮件已发送完成" },
         { status: 400 }
       );
     }
@@ -77,6 +90,18 @@ export async function POST(request: NextRequest) {
 
       // 发送间隔 2 秒
       await new Promise((resolve) => setTimeout(resolve, 2000));
+    }
+
+    // 记录成功发送的邮箱到历史表
+    const successfulEmails = results
+      .filter((r) => r.success)
+      .map((r) => {
+        const task = tasksToSend.find(({ task }) => task.to === r.email)?.task;
+        return { email: r.email, subject: task?.subject || "" };
+      });
+
+    if (successfulEmails.length > 0) {
+      recordSentEmails(successfulEmails);
     }
 
     // 更新 job 状态

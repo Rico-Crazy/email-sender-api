@@ -5,7 +5,13 @@ import type { EmailConfig } from "./gmail";
 
 export interface StoredTask {
   to: string;
+  contactName: string;
+  audienceType: string;
+  phase: string;
   subject: string;
+  sendDate: string;
+  sendTime: string;
+  day: string;
   content: string;
   delayHours: number;
   scheduledFor: number;
@@ -33,7 +39,13 @@ export function generateJobId(): string {
 
 export interface CreateJobInput {
   to: string;
+  contactName: string;
+  audienceType: string;
+  phase: string;
   subject: string;
+  sendDate: string;
+  sendTime: string;
+  day: string;
   content: string;
   delayHours: number;
 }
@@ -46,7 +58,13 @@ export function createJobData(
 
   const storedTasks: StoredTask[] = tasks.map((task) => ({
     to: task.to,
+    contactName: task.contactName,
+    audienceType: task.audienceType,
+    phase: task.phase,
     subject: task.subject,
+    sendDate: task.sendDate,
+    sendTime: task.sendTime,
+    day: task.day,
     content: task.content,
     delayHours: task.delayHours,
     scheduledFor: now + task.delayHours * 60 * 60 * 1000,

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { parseExcelBuffer } from "@/lib/excel";
 import { createJobData } from "@/lib/storage";
 import type { EmailConfig } from "@/lib/gmail";
+import { checkDuplicateEmails, type EmailHistoryRecord } from "@/lib/email-history";
 
 export async function POST(request: NextRequest) {
   try {
@@ -60,6 +61,20 @@ export async function POST(request: NextRequest) {
     // 创建 job 数据（返回给客户端保存）
     const job = createJobData(parseResult.tasks, emailConfig);
 
+    // 检测重复邮箱（与历史记录比对）
+    const emails = parseResult.tasks.map((t) => t.to);
+    const duplicates = checkDuplicateEmails(emails);
+
+    // 检测文件内重复邮箱
+    const emailCounts = new Map<string, number>();
+    for (const email of emails) {
+      const normalized = email.toLowerCase().trim();
+      emailCounts.set(normalized, (emailCounts.get(normalized) || 0) + 1);
+    }
+    const inFileDuplicates = Array.from(emailCounts.entries())
+      .filter(([, count]) => count > 1)
+      .map(([email, count]) => ({ email, count }));
+
     // 计算延迟信息
     const immediateCount = parseResult.tasks.filter(t => t.delayHours === 0).length;
     const scheduledCount = parseResult.tasks.filter(t => t.delayHours > 0).length;
@@ -73,6 +88,9 @@ export async function POST(request: NextRequest) {
       scheduledCount,
       maxDelayHours: maxDelay,
       hasCustomEmail: !!emailConfig,
+      // 重复邮箱警告
+      duplicates: duplicates.length > 0 ? duplicates : undefined,
+      inFileDuplicates: inFileDuplicates.length > 0 ? inFileDuplicates : undefined,
       message: scheduledCount > 0
         ? `任务已创建，包含 ${job.tasks.length} 封邮件：${immediateCount} 封立即发送，${scheduledCount} 封延迟发送（最长 ${maxDelay} 小时）`
         : `任务已创建，包含 ${job.tasks.length} 封邮件，可立即发送`,
