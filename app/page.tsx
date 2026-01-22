@@ -72,6 +72,9 @@ interface SendResultItem {
   error?: string;
   sentAt?: number;
   skipped?: boolean;
+  scheduledFor?: number;
+  sendDate?: string;
+  sendTime?: string;
 }
 
 interface SendProgress {

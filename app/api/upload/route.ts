@@ -69,14 +69,14 @@ export async function POST(request: NextRequest) {
     const historySendCounts = getEmailSendCounts(emails);
     const emailSendCounts = Object.fromEntries(historySendCounts);
 
-    // 检测文件内重复邮箱
+    // 检测文件内重复邮箱（超过3次才算重复）
     const emailCounts = new Map<string, number>();
     for (const email of emails) {
       const normalized = email.toLowerCase().trim();
       emailCounts.set(normalized, (emailCounts.get(normalized) || 0) + 1);
     }
     const inFileDuplicates = Array.from(emailCounts.entries())
-      .filter(([, count]) => count > 1)
+      .filter(([, count]) => count > 3) // 超过3次才报警
       .map(([email, count]) => ({ email, count }));
 
     // 计算延迟信息

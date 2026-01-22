@@ -51,6 +51,9 @@ export async function POST(request: NextRequest) {
         error?: string;
         sentAt?: number;
         skipped?: boolean;
+        scheduledFor?: number; // 预计发送时间
+        sendDate?: string;
+        sendTime?: string;
       }> = [];
 
       let successCount = 0;
@@ -99,6 +102,9 @@ export async function POST(request: NextRequest) {
             success: false,
             error: `跳过: ${validation.reason}`,
             skipped: true,
+            scheduledFor: task.scheduledFor,
+            sendDate: task.sendDate,
+            sendTime: task.sendTime,
           });
 
           // 发送跳过事件
@@ -158,6 +164,9 @@ export async function POST(request: NextRequest) {
           success: result.success,
           error: result.error,
           sentAt: result.success ? sentAt : undefined,
+          scheduledFor: task.scheduledFor,
+          sendDate: task.sendDate,
+          sendTime: task.sendTime,
         });
 
         // 发送单个结果事件

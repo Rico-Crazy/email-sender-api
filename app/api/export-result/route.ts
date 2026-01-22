@@ -9,6 +9,9 @@ interface SendResultItem {
   error?: string;
   sentAt?: number;
   skipped?: boolean;
+  scheduledFor?: number;
+  sendDate?: string;
+  sendTime?: string;
 }
 
 export async function POST(request: NextRequest) {
@@ -26,6 +29,27 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // 计算剩余时间（小时）
+    const now = Date.now();
+    const calculateRemainingHours = (scheduledFor?: number): string => {
+      if (!scheduledFor) return "";
+      const diffMs = scheduledFor - now;
+      if (diffMs <= 0) return "0";
+      const hours = diffMs / (1000 * 60 * 60);
+      return hours.toFixed(1);
+    };
+
+    // 格式化预计发送时间
+    const formatScheduledTime = (r: SendResultItem): string => {
+      if (r.sendDate && r.sendTime) {
+        return `${r.sendDate} ${r.sendTime}`;
+      }
+      if (r.scheduledFor) {
+        return new Date(r.scheduledFor).toLocaleString("zh-CN");
+      }
+      return "";
+    };
+
     // 格式化数据
     const exportData = results.map((r, index) => ({
       "序号": index + 1,
@@ -37,6 +61,8 @@ export async function POST(request: NextRequest) {
       "发送时间": r.sentAt
         ? new Date(r.sentAt).toLocaleString("zh-CN")
         : "",
+      "预计发送时间": formatScheduledTime(r),
+      "剩余时间(h)": calculateRemainingHours(r.scheduledFor),
     }));
 
     // 统计信息
@@ -54,6 +80,8 @@ export async function POST(request: NextRequest) {
       "状态": `成功: ${successCount}`,
       "错误信息": `跳过: ${skippedCount} | 失败: ${failedCount}`,
       "发送时间": "",
+      "预计发送时间": "",
+      "剩余时间(h)": "",
     });
 
     // 创建工作簿
@@ -69,6 +97,8 @@ export async function POST(request: NextRequest) {
       { wch: 12 }, // 状态
       { wch: 30 }, // 错误信息
       { wch: 20 }, // 发送时间
+      { wch: 20 }, // 预计发送时间
+      { wch: 12 }, // 剩余时间(h)
     ];
 
     XLSX.utils.book_append_sheet(workbook, worksheet, "发送结果");
