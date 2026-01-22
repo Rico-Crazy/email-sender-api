@@ -11,10 +11,11 @@ export interface StoredTask {
   subject: string;
   sendDate: string;
   sendTime: string;
+  sendDateTimeBeijing: string; // 发送时间（北京时间格式显示）
   day: string;
   content: string;
   delayHours: number;
-  scheduledFor: number;
+  scheduledFor: number; // 计划发送的绝对时间戳 (UTC)
   status: "pending" | "sent" | "failed";
   sentAt?: number;
   error?: string;
@@ -45,9 +46,11 @@ export interface CreateJobInput {
   subject: string;
   sendDate: string;
   sendTime: string;
+  sendDateTimeBeijing: string;
   day: string;
   content: string;
   delayHours: number;
+  scheduledTimestamp: number;
 }
 
 export function createJobData(
@@ -64,10 +67,11 @@ export function createJobData(
     subject: task.subject,
     sendDate: task.sendDate,
     sendTime: task.sendTime,
+    sendDateTimeBeijing: task.sendDateTimeBeijing,
     day: task.day,
     content: task.content,
     delayHours: task.delayHours,
-    scheduledFor: now + task.delayHours * 60 * 60 * 1000,
+    scheduledFor: task.scheduledTimestamp, // 直接使用计算好的时间戳
     status: "pending" as const,
   }));
 

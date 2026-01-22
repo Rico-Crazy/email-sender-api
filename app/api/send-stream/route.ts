@@ -9,9 +9,10 @@ export const dynamic = "force-dynamic";
 
 export async function POST(request: NextRequest) {
   const body = await request.json();
-  const { job, selectedEmails } = body as {
+  const { job, selectedEmails, sendAll } = body as {
     job: StoredJob;
     selectedEmails?: string[];
+    sendAll?: boolean; // true = 忽略定时，立即发送所有；false = 只发送到期的
   };
 
   if (!job || !job.tasks || job.tasks.length === 0) {
@@ -22,18 +23,32 @@ export async function POST(request: NextRequest) {
   }
 
   const selectedSet = selectedEmails ? new Set(selectedEmails) : null;
+  const now = Date.now();
 
   const tasksToSend = job.tasks
     .map((task, index) => ({ task, index }))
     .filter(({ task }) => {
       if (task.status !== "pending") return false;
       if (selectedSet && !selectedSet.has(task.to)) return false;
+      // 如果不是立即发送所有，只发送已到期的任务
+      if (!sendAll && task.scheduledFor > now) return false;
       return true;
     });
 
+  // 统计未到期的任务数量
+  const pendingScheduledCount = job.tasks.filter(
+    (task) =>
+      task.status === "pending" &&
+      task.scheduledFor > now &&
+      (!selectedSet || selectedSet.has(task.to))
+  ).length;
+
   if (tasksToSend.length === 0) {
+    const errorMsg = pendingScheduledCount > 0
+      ? `没有到期的邮件，${pendingScheduledCount} 封邮件尚未到发送时间`
+      : "没有选中的邮件需要发送";
     return new Response(
-      JSON.stringify({ error: "没有选中的邮件需要发送" }),
+      JSON.stringify({ error: errorMsg, pendingScheduled: pendingScheduledCount }),
       { status: 400, headers: { "Content-Type": "application/json" } }
     );
   }

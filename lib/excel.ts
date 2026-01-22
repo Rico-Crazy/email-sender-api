@@ -8,9 +8,11 @@ export interface EmailTaskWithDelay {
   subject: string;
   sendDate: string;
   sendTime: string;
+  sendDateTimeBeijing: string; // 发送时间（北京时间格式显示）
   day: string;
   content: string;
   delayHours: number; // 延迟时间（小时），根据 sendDate 和 sendTime 计算
+  scheduledTimestamp: number; // 计划发送的绝对时间戳 (UTC)
 }
 
 export interface ParseResult {
@@ -83,8 +85,8 @@ export function parseExcelBuffer(buffer: Buffer): ParseResult {
         continue;
       }
 
-      // 根据 sendDate 和 sendTime 计算延迟时间
-      const delayHours = calculateDelayHours(sendDate, sendTime);
+      // 根据 sendDate 和 sendTime 计算发送计划
+      const schedule = calculateSchedule(sendDate, sendTime);
 
       tasks.push({
         to: email,
@@ -94,9 +96,11 @@ export function parseExcelBuffer(buffer: Buffer): ParseResult {
         subject: subject,
         sendDate: sendDate,
         sendTime: sendTime,
+        sendDateTimeBeijing: schedule.beijingTimeStr,
         day: day,
         content: content,
-        delayHours: delayHours,
+        delayHours: schedule.delayHours,
+        scheduledTimestamp: schedule.scheduledTimestamp,
       });
     }
 
@@ -141,10 +145,40 @@ function isSentMarker(value: string): boolean {
   return sentMarkers.includes(normalizedValue);
 }
 
-// 根据发送日期和时间计算延迟小时数（使用本地时区）
-function calculateDelayHours(sendDate: string, sendTime: string): number {
+// 判断是否为美国夏令时（大约3月第二个周日到11月第一个周日）
+function isPacificDST(year: number, month: number, day: number): boolean {
+  // 简化判断：3月15日-11月1日期间使用PDT
+  if (month > 3 && month < 11) return true;
+  if (month === 3 && day >= 15) return true;
+  if (month === 11 && day < 7) return true;
+  return false;
+}
+
+// 格式化时间戳为北京时间字符串
+function formatToBeijingTime(timestamp: number): string {
+  // 北京时间 = UTC+8
+  const beijingDate = new Date(timestamp + 8 * 60 * 60 * 1000);
+  const year = beijingDate.getUTCFullYear();
+  const month = String(beijingDate.getUTCMonth() + 1).padStart(2, '0');
+  const day = String(beijingDate.getUTCDate()).padStart(2, '0');
+  const hours = String(beijingDate.getUTCHours()).padStart(2, '0');
+  const minutes = String(beijingDate.getUTCMinutes()).padStart(2, '0');
+  return `${year}-${month}-${day} ${hours}:${minutes}`;
+}
+
+interface ScheduleResult {
+  delayHours: number;
+  scheduledTimestamp: number;
+  beijingTimeStr: string;
+}
+
+// 根据发送日期和时间计算发送计划
+// 注意：表格中的时间是美西时间 (Pacific Time)，转换为北京时间进行显示和计算
+function calculateSchedule(sendDate: string, sendTime: string): ScheduleResult {
+  const now = Date.now();
+
   if (!sendDate) {
-    return 0; // 没有指定日期，立即发送
+    return { delayHours: 0, scheduledTimestamp: now, beijingTimeStr: formatToBeijingTime(now) };
   }
 
   try {
@@ -176,7 +210,7 @@ function calculateDelayHours(sendDate: string, sendTime: string): number {
           month = fallbackDate.getMonth() + 1;
           day = fallbackDate.getDate();
         } else {
-          return 0; // 无法解析
+          return { delayHours: 0, scheduledTimestamp: now, beijingTimeStr: formatToBeijingTime(now) };
         }
       }
     }
@@ -206,20 +240,33 @@ function calculateDelayHours(sendDate: string, sendTime: string): number {
       }
     }
 
-    // 构建目标时间（使用本地时区）
-    const targetDate = new Date(year, month - 1, day, hours, minutes, 0, 0);
+    // 表格时间是美西时间 (Pacific Time)
+    // PDT (夏令时): UTC-7
+    // PST (标准时): UTC-8
+    const isDST = isPacificDST(year, month, day);
+    const pacificOffset = isDST ? 7 : 8; // PDT = UTC-7, PST = UTC-8
 
-    if (isNaN(targetDate.getTime())) {
-      return 0; // 无法解析日期，立即发送
+    // 创建 UTC 时间戳：Pacific Time + offset = UTC
+    const targetUtc = Date.UTC(year, month - 1, day, hours + pacificOffset, minutes, 0, 0);
+
+    if (isNaN(targetUtc)) {
+      return { delayHours: 0, scheduledTimestamp: now, beijingTimeStr: formatToBeijingTime(now) };
     }
 
-    const now = new Date();
-    const diffMs = targetDate.getTime() - now.getTime();
+    const diffMs = targetUtc - now;
     const diffHours = diffMs / (1000 * 60 * 60);
 
-    // 如果计算出的时间是过去，返回 0 立即发送
-    return diffHours > 0 ? Math.round(diffHours * 100) / 100 : 0;
+    // 如果是过去的时间，立即发送
+    if (diffHours <= 0) {
+      return { delayHours: 0, scheduledTimestamp: now, beijingTimeStr: formatToBeijingTime(now) };
+    }
+
+    return {
+      delayHours: Math.round(diffHours * 100) / 100,
+      scheduledTimestamp: targetUtc,
+      beijingTimeStr: formatToBeijingTime(targetUtc),
+    };
   } catch {
-    return 0; // 解析出错，立即发送
+    return { delayHours: 0, scheduledTimestamp: now, beijingTimeStr: formatToBeijingTime(now) };
   }
 }

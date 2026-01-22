@@ -39,13 +39,22 @@ export async function POST(request: NextRequest) {
       return hours.toFixed(1);
     };
 
-    // 格式化预计发送时间
+    // 格式化时间为北京时间
+    const formatToBeijingTime = (timestamp: number): string => {
+      // 北京时间 = UTC+8
+      const beijingDate = new Date(timestamp + 8 * 60 * 60 * 1000);
+      const year = beijingDate.getUTCFullYear();
+      const month = String(beijingDate.getUTCMonth() + 1).padStart(2, '0');
+      const day = String(beijingDate.getUTCDate()).padStart(2, '0');
+      const hours = String(beijingDate.getUTCHours()).padStart(2, '0');
+      const minutes = String(beijingDate.getUTCMinutes()).padStart(2, '0');
+      return `${year}-${month}-${day} ${hours}:${minutes}`;
+    };
+
+    // 格式化预计发送时间（北京时间）
     const formatScheduledTime = (r: SendResultItem): string => {
-      if (r.sendDate && r.sendTime) {
-        return `${r.sendDate} ${r.sendTime}`;
-      }
       if (r.scheduledFor) {
-        return new Date(r.scheduledFor).toLocaleString("zh-CN");
+        return formatToBeijingTime(r.scheduledFor) + " (北京)";
       }
       return "";
     };
@@ -59,7 +68,7 @@ export async function POST(request: NextRequest) {
       "状态": r.success ? "发送成功" : (r.skipped ? "已跳过" : "发送失败"),
       "错误信息": r.error || "",
       "发送时间": r.sentAt
-        ? new Date(r.sentAt).toLocaleString("zh-CN")
+        ? formatToBeijingTime(r.sentAt) + " (北京)"
         : "",
       "预计发送时间": formatScheduledTime(r),
       "剩余时间(h)": calculateRemainingHours(r.scheduledFor),

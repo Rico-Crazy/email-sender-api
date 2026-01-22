@@ -10,6 +10,7 @@ interface StoredTask {
   subject: string;
   sendDate: string;
   sendTime: string;
+  sendDateTimeBeijing: string; // 发送时间（北京时间）
   day: string;
   content: string;
   delayHours: number;
@@ -218,15 +219,23 @@ export default function Home() {
     }
   };
 
-  const handleSend = async () => {
+  const handleSend = async (sendAll: boolean = false) => {
     if (!currentJob) return;
 
-    const selectedTasks = currentJob.tasks.filter(
+    const selectedTasksList = currentJob.tasks.filter(
       (task) => task.status === "pending" && selectedEmails.has(task.to)
     );
 
-    if (selectedTasks.length === 0) {
+    if (selectedTasksList.length === 0) {
       alert("请选择要发送的邮件");
+      return;
+    }
+
+    // 如果不是立即发送所有，检查是否有到期的邮件
+    const currentTime = Date.now();
+    const dueTasksList = selectedTasksList.filter((t) => t.scheduledFor <= currentTime);
+    if (!sendAll && dueTasksList.length === 0) {
+      alert("没有到期的邮件可发送。如需立即发送所有邮件，请使用「立即发送所有」按钮。");
       return;
     }
 
@@ -243,6 +252,7 @@ export default function Home() {
         body: JSON.stringify({
           job: currentJob,
           selectedEmails: Array.from(selectedEmails),
+          sendAll,
         }),
         signal: abortControllerRef.current.signal,
       });
@@ -387,6 +397,14 @@ export default function Home() {
   const sentCount = currentJob?.tasks.filter((t) => t.status === "sent").length || 0;
   const failedCount = currentJob?.tasks.filter((t) => t.status === "failed").length || 0;
   const selectedCount = pendingTasks.filter((t) => selectedEmails.has(t.to)).length;
+
+  // 计算到期和未到期的任务
+  const now = Date.now();
+  const selectedTasks = pendingTasks.filter((t) => selectedEmails.has(t.to));
+  const dueTasks = selectedTasks.filter((t) => t.scheduledFor <= now);
+  const scheduledTasks = selectedTasks.filter((t) => t.scheduledFor > now);
+  const dueCount = dueTasks.length;
+  const scheduledCount = scheduledTasks.length;
 
   const isGmailConfigured = gmailUser && gmailPass;
   const isFeishuConfigured = feishuUser && feishuPass;
@@ -655,6 +673,7 @@ export default function Home() {
                   <th className="p-2 text-left">邮箱</th>
                   <th className="p-2 text-left">联系人</th>
                   <th className="p-2 text-left">主题</th>
+                  <th className="p-2 text-left w-36">计划发送</th>
                   <th className="p-2 text-left w-20">历史次数</th>
                 </tr>
               </thead>
@@ -688,6 +707,32 @@ export default function Home() {
                       <td className="p-2">{task.contactName}</td>
                       <td className="p-2 truncate max-w-xs" title={task.subject}>{task.subject}</td>
                       <td className="p-2">
+                        {(() => {
+                          const isDue = task.scheduledFor <= now;
+                          if (isDue) {
+                            return (
+                              <span className="text-xs px-2 py-1 rounded bg-green-100 text-green-700" title={task.sendDateTimeBeijing}>
+                                立即发送
+                              </span>
+                            );
+                          }
+                          // 显示剩余时间和北京时间
+                          const diffMs = task.scheduledFor - now;
+                          const hours = Math.floor(diffMs / (1000 * 60 * 60));
+                          const mins = Math.floor((diffMs % (1000 * 60 * 60)) / (1000 * 60));
+                          return (
+                            <div className="flex flex-col">
+                              <span className="text-xs px-2 py-1 rounded bg-yellow-100 text-yellow-700">
+                                {hours > 0 ? `${hours}h ${mins}m` : `${mins}m`} 后
+                              </span>
+                              <span className="text-xs text-gray-500 mt-1" title="北京时间">
+                                {task.sendDateTimeBeijing}
+                              </span>
+                            </div>
+                          );
+                        })()}
+                      </td>
+                      <td className="p-2">
                         <span className={`text-xs px-2 py-1 rounded ${
                           historyCount >= 3 ? "bg-red-100 text-red-700" :
                           historyCount > 0 ? "bg-yellow-100 text-yellow-700" :
@@ -703,17 +748,41 @@ export default function Home() {
             </table>
           </div>
 
-          <div className="mt-4 flex items-center justify-between">
-            <p className="text-sm text-gray-600">
-              已选中 <strong>{selectedCount}</strong> / {pendingTasks.length} 封邮件
-            </p>
-            <button
-              onClick={handleSend}
-              disabled={sending || selectedCount === 0}
-              className="bg-green-500 text-white px-6 py-2 rounded-lg disabled:opacity-50 hover:bg-green-600"
-            >
-              发送选中的 {selectedCount} 封邮件
-            </button>
+          <div className="mt-4 flex flex-col gap-3">
+            <div className="flex items-center justify-between">
+              <p className="text-sm text-gray-600">
+                已选中 <strong>{selectedCount}</strong> / {pendingTasks.length} 封邮件
+                {selectedCount > 0 && (
+                  <span className="ml-2">
+                    (<span className="text-green-600">{dueCount} 封到期</span>
+                    {scheduledCount > 0 && <span className="text-yellow-600">, {scheduledCount} 封定时</span>})
+                  </span>
+                )}
+              </p>
+            </div>
+            <div className="flex gap-2 justify-end">
+              {dueCount > 0 && (
+                <button
+                  onClick={() => handleSend(false)}
+                  disabled={sending || dueCount === 0}
+                  className="bg-green-500 text-white px-4 py-2 rounded-lg disabled:opacity-50 hover:bg-green-600"
+                >
+                  发送到期的 {dueCount} 封
+                </button>
+              )}
+              <button
+                onClick={() => handleSend(true)}
+                disabled={sending || selectedCount === 0}
+                className="bg-blue-500 text-white px-4 py-2 rounded-lg disabled:opacity-50 hover:bg-blue-600"
+              >
+                立即发送所有 {selectedCount} 封
+              </button>
+            </div>
+            {scheduledCount > 0 && dueCount === 0 && (
+              <p className="text-sm text-yellow-600 text-right">
+                所有选中邮件都未到发送时间，可使用「立即发送所有」忽略定时
+              </p>
+            )}
           </div>
         </div>
       )}

@@ -63,10 +63,10 @@ export async function POST(request: NextRequest) {
 
     // 检测重复邮箱（与历史记录比对，超过3次才报警）
     const emails = parseResult.tasks.map((t) => t.to);
-    const duplicates = checkDuplicateEmails(emails, 3); // 超过3次才报警
+    const duplicates = await checkDuplicateEmails(emails, 3); // 超过3次才报警
 
     // 获取所有邮箱的历史发送次数
-    const historySendCounts = getEmailSendCounts(emails);
+    const historySendCounts = await getEmailSendCounts(emails);
     const emailSendCounts = Object.fromEntries(historySendCounts);
 
     // 检测文件内重复邮箱（超过3次才算重复）
@@ -79,10 +79,11 @@ export async function POST(request: NextRequest) {
       .filter(([, count]) => count > 3) // 超过3次才报警
       .map(([email, count]) => ({ email, count }));
 
-    // 计算延迟信息
-    const immediateCount = parseResult.tasks.filter(t => t.delayHours === 0).length;
-    const scheduledCount = parseResult.tasks.filter(t => t.delayHours > 0).length;
-    const maxDelay = Math.max(...parseResult.tasks.map(t => t.delayHours));
+    // 计算延迟信息（基于时间戳，更准确）
+    const now = Date.now();
+    const immediateCount = job.tasks.filter(t => t.scheduledFor <= now).length;
+    const scheduledCount = job.tasks.filter(t => t.scheduledFor > now).length;
+    const maxDelay = Math.max(...parseResult.tasks.map(t => t.delayHours), 0);
 
     return NextResponse.json({
       success: true,
