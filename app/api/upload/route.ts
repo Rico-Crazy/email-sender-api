@@ -12,6 +12,7 @@ export async function POST(request: NextRequest) {
     const emailUser = formData.get("emailUser") as string | null;
     const emailPass = formData.get("emailPass") as string | null;
     const senderName = formData.get("senderName") as string | null;
+    const emailProvider = formData.get("emailProvider") as "gmail" | "feishu" | null;
 
     if (!file) {
       return NextResponse.json(
@@ -52,6 +53,7 @@ export async function POST(request: NextRequest) {
         user: emailUser,
         pass: emailPass,
         senderName: senderName || undefined,
+        provider: emailProvider || "gmail",
       };
     }
 

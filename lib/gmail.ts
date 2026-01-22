@@ -11,26 +11,74 @@ export interface EmailConfig {
   user: string;
   pass: string;
   senderName?: string;
+  provider?: "gmail" | "feishu" | "custom";
+  // 自定义 SMTP 配置
+  smtpHost?: string;
+  smtpPort?: number;
+  secure?: boolean;
 }
+
+// SMTP 配置预设
+const SMTP_PRESETS = {
+  gmail: {
+    service: "gmail",
+  },
+  feishu: {
+    host: "smtp.feishu.cn",
+    port: 465,
+    secure: true,
+  },
+};
 
 function createTransporter(config?: EmailConfig) {
   const user = config?.user || process.env.GMAIL_USER;
   const pass = config?.pass || process.env.GMAIL_APP_PASSWORD;
 
   if (!user || !pass) {
-    throw new Error("Missing GMAIL_USER or GMAIL_APP_PASSWORD");
+    throw new Error("Missing email credentials (user or password)");
   }
 
-  return nodemailer.createTransport({
-    service: "gmail",
-    auth: {
-      user,
-      pass,
-    },
-    connectionTimeout: 10000,
-    greetingTimeout: 10000,
-    socketTimeout: 15000,
-  });
+  const provider = config?.provider || "gmail";
+
+  // 自定义 SMTP 配置
+  if (provider === "custom" && config?.smtpHost) {
+    return nodemailer.createTransport({
+      host: config.smtpHost,
+      port: config.smtpPort || 465,
+      secure: config.secure !== false,
+      auth: { user, pass },
+      connectionTimeout: 10000,
+      greetingTimeout: 10000,
+      socketTimeout: 15000,
+    });
+  }
+
+  // 预设配置
+  const preset = provider in SMTP_PRESETS
+    ? SMTP_PRESETS[provider as keyof typeof SMTP_PRESETS]
+    : SMTP_PRESETS.gmail;
+
+  if ("service" in preset) {
+    // Gmail 使用 service
+    return nodemailer.createTransport({
+      service: preset.service,
+      auth: { user, pass },
+      connectionTimeout: 10000,
+      greetingTimeout: 10000,
+      socketTimeout: 15000,
+    });
+  } else {
+    // 其他使用 host/port
+    return nodemailer.createTransport({
+      host: preset.host,
+      port: preset.port,
+      secure: preset.secure,
+      auth: { user, pass },
+      connectionTimeout: 10000,
+      greetingTimeout: 10000,
+      socketTimeout: 15000,
+    });
+  }
 }
 
 /**
@@ -48,11 +96,9 @@ function processContent(content: string): { html: string; text: string } {
   let text: string;
 
   if (isHtml(content)) {
-    // 已经是 HTML，直接使用
     html = content;
     text = extractPlainText(content);
   } else {
-    // 纯文本，转换为 HTML
     html = formatEmailContent(content);
     text = content;
   }
@@ -69,25 +115,18 @@ export async function sendEmail(
     const user = config?.user || process.env.GMAIL_USER;
     const senderName = config?.senderName || "";
 
-    // 处理内容格式
     const { html, text } = processContent(task.content);
-
-    // 构建发件人地址（带名称）
     const from = senderName ? `"${senderName}" <${user}>` : user;
 
     await transporter.sendMail({
       from,
       to: task.to,
       subject: task.subject,
-      // 同时提供纯文本和 HTML 版本，避免被标记为垃圾邮件
       text,
       html,
-      // 添加 Reply-To 头
       replyTo: user,
       headers: {
-        // 添加优先级头
         "X-Priority": "3",
-        // 标记为正常邮件
         "X-Mailer": "Email Sender API",
       },
     });
@@ -118,7 +157,7 @@ export async function sendEmailBatch(
       error: result.error,
     });
 
-    // 增加发送间隔到 2 秒，避免被标记为垃圾邮件
+    // 发送间隔 2 秒
     await new Promise((resolve) => setTimeout(resolve, 2000));
   }
 
