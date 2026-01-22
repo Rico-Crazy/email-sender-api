@@ -64,43 +64,55 @@ function parseDate(dateValue: string | number): { year: number; month: number; d
   if (typeof dateValue === "number" || (typeof dateValue === "string" && /^\d+(\.\d+)?$/.test(dateValue.trim()))) {
     const num = typeof dateValue === "number" ? dateValue : parseFloat(dateValue);
     if (num > 1000 && num < 100000) {
-      return excelSerialToDate(Math.floor(num));
+      const result = excelSerialToDate(Math.floor(num));
+      console.log(`[parseDate] Excel serial ${num} -> ${result.year}-${result.month}-${result.day}`);
+      return result;
     }
   }
 
   const str = String(dateValue).trim();
-  if (!str) return null;
+  if (!str) {
+    console.log(`[parseDate] Empty date value`);
+    return null;
+  }
 
   // 格式: YYYY/MM/DD 或 YYYY-MM-DD 或 YYYY/M/D
   const isoMatch = str.match(/^(\d{4})[-\/](\d{1,2})[-\/](\d{1,2})$/);
   if (isoMatch) {
-    return {
+    const result = {
       year: parseInt(isoMatch[1], 10),
       month: parseInt(isoMatch[2], 10),
       day: parseInt(isoMatch[3], 10),
     };
+    console.log(`[parseDate] ISO format "${str}" -> ${result.year}-${result.month}-${result.day}`);
+    return result;
   }
 
   // 格式: MM/DD/YYYY 或 M/D/YYYY
   const usMatch = str.match(/^(\d{1,2})[-\/](\d{1,2})[-\/](\d{4})$/);
   if (usMatch) {
-    return {
+    const result = {
       year: parseInt(usMatch[3], 10),
       month: parseInt(usMatch[1], 10),
       day: parseInt(usMatch[2], 10),
     };
+    console.log(`[parseDate] US format "${str}" -> ${result.year}-${result.month}-${result.day}`);
+    return result;
   }
 
   // 尝试 JS Date 解析
   const fallback = new Date(str);
   if (!isNaN(fallback.getTime())) {
-    return {
+    const result = {
       year: fallback.getFullYear(),
       month: fallback.getMonth() + 1,
       day: fallback.getDate(),
     };
+    console.log(`[parseDate] JS Date fallback "${str}" -> ${result.year}-${result.month}-${result.day}`);
+    return result;
   }
 
+  console.log(`[parseDate] Failed to parse: "${str}"`);
   return null;
 }
 
@@ -274,6 +286,13 @@ export function parseExcelBuffer(buffer: Buffer): ParseResult {
 
       // 计算发送时间
       const schedule = calculateSchedule(sendDate, sendTime);
+
+      // Debug: 打印前几个任务的时间解析结果
+      if (tasks.length < 3) {
+        console.log(`[Excel] Row ${rowNum}: sendDate="${sendDate}", sendTime="${sendTime}"`);
+        console.log(`  -> scheduledTimestamp=${schedule.scheduledTimestamp} (${new Date(schedule.scheduledTimestamp).toISOString()})`);
+        console.log(`  -> beijingTime="${schedule.beijingTimeStr}", delayHours=${schedule.delayHours}`);
+      }
 
       tasks.push({
         to: email,
