@@ -10,7 +10,7 @@ export interface EmailHistoryRecord {
 
 // 检查 Supabase 是否已配置
 function isSupabaseConfigured(): boolean {
-  return !!(process.env.NEXT_PUBLIC_SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY);
+  return supabase !== null;
 }
 
 // 记录发送成功的邮箱
@@ -25,7 +25,7 @@ export async function recordSentEmail(email: string, subject: string): Promise<v
 
   try {
     // 查询是否已存在
-    const { data: existing } = await supabase
+    const { data: existing } = await supabase!
       .from("email_history")
       .select("*")
       .eq("email", normalizedEmail)
@@ -34,7 +34,7 @@ export async function recordSentEmail(email: string, subject: string): Promise<v
     if (existing) {
       // 更新现有记录
       const newSubjects = [subject, ...(existing.subjects || []).slice(0, 4)];
-      await supabase
+      await supabase!
         .from("email_history")
         .update({
           last_sent_at: now,
@@ -45,7 +45,7 @@ export async function recordSentEmail(email: string, subject: string): Promise<v
         .eq("email", normalizedEmail);
     } else {
       // 新增记录
-      await supabase.from("email_history").insert({
+      await supabase!.from("email_history").insert({
         email: normalizedEmail,
         last_sent_at: now,
         sent_count: 1,
@@ -88,7 +88,7 @@ export async function checkDuplicateEmails(
   const normalizedEmails = emails.map((e) => e.toLowerCase().trim());
 
   try {
-    const { data: records } = await supabase
+    const { data: records } = await supabase!
       .from("email_history")
       .select("*")
       .in("email", normalizedEmails)
@@ -124,7 +124,7 @@ export async function getEmailSendCounts(
   const normalizedEmails = emails.map((e) => e.toLowerCase().trim());
 
   try {
-    const { data: records } = await supabase
+    const { data: records } = await supabase!
       .from("email_history")
       .select("email, sent_count")
       .in("email", normalizedEmails);
@@ -148,11 +148,11 @@ export async function getHistoryStats(): Promise<{ totalEmails: number; lastUpda
   }
 
   try {
-    const { count } = await supabase
+    const { count } = await supabase!
       .from("email_history")
       .select("*", { count: "exact", head: true });
 
-    const { data: latest } = await supabase
+    const { data: latest } = await supabase!
       .from("email_history")
       .select("updated_at")
       .order("updated_at", { ascending: false })

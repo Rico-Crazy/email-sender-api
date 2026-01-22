@@ -15,24 +15,7 @@ export async function POST(request: NextRequest) {
     sendAll?: boolean; // true = 忽略定时，立即发送所有；false = 只发送到期的
   };
 
-  // 调试日志
   const now = Date.now();
-  console.log("========== 发送请求调试 ==========");
-  console.log("sendAll:", sendAll);
-  console.log("当前时间:", now, new Date(now).toISOString());
-  console.log("选中邮箱数:", selectedEmails?.length);
-
-  if (job?.tasks) {
-    console.log("任务数:", job.tasks.length);
-    job.tasks.slice(0, 3).forEach((task, i) => {
-      console.log(`任务${i}: ${task.to}`);
-      console.log(`  scheduledFor: ${task.scheduledFor}`);
-      console.log(`  scheduledFor 时间: ${new Date(task.scheduledFor).toISOString()}`);
-      console.log(`  是否到期: ${task.scheduledFor <= now}`);
-      console.log(`  sendDate: ${task.sendDate}, sendTime: ${task.sendTime}`);
-    });
-  }
-  console.log("====================================");
 
   if (!job || !job.tasks || job.tasks.length === 0) {
     return new Response(JSON.stringify({ error: "job data is required" }), {

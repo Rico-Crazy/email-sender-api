@@ -6,13 +6,13 @@ export interface EmailTaskWithDelay {
   audienceType: string;
   phase: string;
   subject: string;
-  sendDate: string;
-  sendTime: string;
-  sendDateTimeBeijing: string; // 发送时间（北京时间格式显示）
+  sendDate: string;        // 原始日期字符串
+  sendTime: string;        // 原始时间字符串
+  sendDateTimeBeijing: string; // 转换后的北京时间显示
   day: string;
   content: string;
-  delayHours: number; // 延迟时间（小时），根据 sendDate 和 sendTime 计算
-  scheduledTimestamp: number; // 计划发送的绝对时间戳 (UTC)
+  delayHours: number;      // 延迟小时数
+  scheduledTimestamp: number; // UTC 时间戳
 }
 
 export interface ParseResult {
@@ -21,18 +21,208 @@ export interface ParseResult {
   error?: string;
 }
 
+// ============ 时间转换核心逻辑 ============
+// 美西时间 (Pacific Time) 统一按 PST (UTC-8) 计算
+// 北京时间 (UTC+8)
+// 时差: 16 小时 (北京 = 美西 + 16小时)
+
+const PACIFIC_OFFSET_HOURS = -8;  // PST = UTC-8
+const BEIJING_OFFSET_HOURS = 8;   // 北京 = UTC+8
+const PACIFIC_TO_BEIJING_HOURS = 16; // 北京比美西快16小时
+
+/**
+ * 将 Excel 日期序列号转换为日期对象
+ * Excel 日期从 1900-01-01 开始计数
+ */
+function excelSerialToDate(serial: number): { year: number; month: number; day: number } {
+  const excelEpoch = new Date(Date.UTC(1899, 11, 30)); // 1899-12-30
+  const date = new Date(excelEpoch.getTime() + serial * 24 * 60 * 60 * 1000);
+  return {
+    year: date.getUTCFullYear(),
+    month: date.getUTCMonth() + 1,
+    day: date.getUTCDate(),
+  };
+}
+
+/**
+ * 将 Excel 时间序列号转换为小时和分钟
+ * Excel 时间是 0-1 之间的小数，1.0 = 24小时
+ */
+function excelSerialToTime(serial: number): { hours: number; minutes: number } {
+  const totalMinutes = Math.round(serial * 24 * 60);
+  return {
+    hours: Math.floor(totalMinutes / 60) % 24,
+    minutes: totalMinutes % 60,
+  };
+}
+
+/**
+ * 解析日期字符串，支持多种格式
+ */
+function parseDate(dateValue: string | number): { year: number; month: number; day: number } | null {
+  // 如果是数字，当作 Excel 序列号处理
+  if (typeof dateValue === "number" || (typeof dateValue === "string" && /^\d+(\.\d+)?$/.test(dateValue.trim()))) {
+    const num = typeof dateValue === "number" ? dateValue : parseFloat(dateValue);
+    if (num > 1000 && num < 100000) {
+      return excelSerialToDate(Math.floor(num));
+    }
+  }
+
+  const str = String(dateValue).trim();
+  if (!str) return null;
+
+  // 格式: YYYY/MM/DD 或 YYYY-MM-DD 或 YYYY/M/D
+  const isoMatch = str.match(/^(\d{4})[-\/](\d{1,2})[-\/](\d{1,2})$/);
+  if (isoMatch) {
+    return {
+      year: parseInt(isoMatch[1], 10),
+      month: parseInt(isoMatch[2], 10),
+      day: parseInt(isoMatch[3], 10),
+    };
+  }
+
+  // 格式: MM/DD/YYYY 或 M/D/YYYY
+  const usMatch = str.match(/^(\d{1,2})[-\/](\d{1,2})[-\/](\d{4})$/);
+  if (usMatch) {
+    return {
+      year: parseInt(usMatch[3], 10),
+      month: parseInt(usMatch[1], 10),
+      day: parseInt(usMatch[2], 10),
+    };
+  }
+
+  // 尝试 JS Date 解析
+  const fallback = new Date(str);
+  if (!isNaN(fallback.getTime())) {
+    return {
+      year: fallback.getFullYear(),
+      month: fallback.getMonth() + 1,
+      day: fallback.getDate(),
+    };
+  }
+
+  return null;
+}
+
+/**
+ * 解析时间字符串，支持多种格式
+ */
+function parseTime(timeValue: string | number): { hours: number; minutes: number } {
+  // 默认时间
+  let hours = 0, minutes = 0;
+
+  // 如果是数字，当作 Excel 时间序列号处理
+  if (typeof timeValue === "number" || (typeof timeValue === "string" && /^0?\.\d+$/.test(timeValue.trim()))) {
+    const num = typeof timeValue === "number" ? timeValue : parseFloat(timeValue);
+    if (num >= 0 && num < 1) {
+      return excelSerialToTime(num);
+    }
+  }
+
+  const str = String(timeValue).trim();
+  if (!str) return { hours: 0, minutes: 0 };
+
+  // 格式: HH:MM 或 H:MM 或 HH:MM:SS
+  const time24Match = str.match(/^(\d{1,2}):(\d{2})(?::\d{2})?$/);
+  if (time24Match) {
+    hours = parseInt(time24Match[1], 10);
+    minutes = parseInt(time24Match[2], 10);
+    return { hours, minutes };
+  }
+
+  // 格式: H:MM AM/PM
+  const time12Match = str.match(/^(\d{1,2}):(\d{2})\s*(AM|PM|am|pm)$/i);
+  if (time12Match) {
+    hours = parseInt(time12Match[1], 10);
+    minutes = parseInt(time12Match[2], 10);
+    const period = time12Match[3].toLowerCase();
+    if (period === "pm" && hours !== 12) hours += 12;
+    if (period === "am" && hours === 12) hours = 0;
+    return { hours, minutes };
+  }
+
+  return { hours: 0, minutes: 0 };
+}
+
+/**
+ * 将美西时间转换为 UTC 时间戳
+ */
+function pacificTimeToUtc(year: number, month: number, day: number, hours: number, minutes: number): number {
+  // 美西时间 = UTC - 8小时 (PST)
+  // 所以 UTC = 美西时间 + 8小时
+  return Date.UTC(year, month - 1, day, hours - PACIFIC_OFFSET_HOURS, minutes, 0, 0);
+}
+
+/**
+ * 将 UTC 时间戳转换为北京时间字符串
+ */
+function utcToBeijingTimeString(utcTimestamp: number): string {
+  const beijingTime = new Date(utcTimestamp + BEIJING_OFFSET_HOURS * 60 * 60 * 1000);
+  const year = beijingTime.getUTCFullYear();
+  const month = String(beijingTime.getUTCMonth() + 1).padStart(2, "0");
+  const day = String(beijingTime.getUTCDate()).padStart(2, "0");
+  const hours = String(beijingTime.getUTCHours()).padStart(2, "0");
+  const mins = String(beijingTime.getUTCMinutes()).padStart(2, "0");
+  return `${year}-${month}-${day} ${hours}:${mins}`;
+}
+
+/**
+ * 计算发送计划
+ * @param sendDate 发送日期 (美西时间)
+ * @param sendTime 发送时间 (美西时间)
+ * @returns 计划信息
+ */
+function calculateSchedule(sendDate: string | number, sendTime: string | number): {
+  delayHours: number;
+  scheduledTimestamp: number;
+  beijingTimeStr: string;
+} {
+  const now = Date.now();
+  const nowBeijing = utcToBeijingTimeString(now);
+
+  // 解析日期
+  const date = parseDate(sendDate);
+  if (!date) {
+    // 没有日期，立即发送
+    return { delayHours: 0, scheduledTimestamp: now, beijingTimeStr: nowBeijing };
+  }
+
+  // 解析时间
+  const time = parseTime(sendTime);
+
+  // 转换为 UTC 时间戳
+  const targetUtc = pacificTimeToUtc(date.year, date.month, date.day, time.hours, time.minutes);
+  const beijingTimeStr = utcToBeijingTimeString(targetUtc);
+
+  // 计算延迟
+  const diffMs = targetUtc - now;
+  const diffHours = diffMs / (1000 * 60 * 60);
+
+  // 如果目标时间已过，立即发送
+  if (diffHours <= 0) {
+    return { delayHours: 0, scheduledTimestamp: now, beijingTimeStr: nowBeijing };
+  }
+
+  return {
+    delayHours: Math.round(diffHours * 100) / 100,
+    scheduledTimestamp: targetUtc,
+    beijingTimeStr,
+  };
+}
+
+// ============ Excel 解析 ============
+
 export function parseExcelBuffer(buffer: Buffer): ParseResult {
   try {
     const workbook = XLSX.read(buffer, { type: "buffer" });
 
-    // Get the first sheet
     const sheetName = workbook.SheetNames[0];
     if (!sheetName) {
       return { success: false, error: "Excel file has no sheets" };
     }
 
     const sheet = workbook.Sheets[sheetName];
-    const data = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet);
+    const data = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, { raw: false });
 
     if (data.length === 0) {
       return { success: false, error: "Excel file is empty" };
@@ -40,65 +230,62 @@ export function parseExcelBuffer(buffer: Buffer): ParseResult {
 
     const tasks: EmailTaskWithDelay[] = [];
     const errors: string[] = [];
-
-    let skippedCount = 0; // 统计跳过已发送的行数
+    let skippedCount = 0;
 
     for (let i = 0; i < data.length; i++) {
       const row = data[i];
-      const rowNum = i + 2; // +2 because row 1 is header, and we're 0-indexed
+      const rowNum = i + 2;
 
-      // 检测已发送标记，跳过已发送的行
+      // 检测已发送标记
       const sentStatus = getColumnValue(row, ["Sent Status", "已发送", "Status", "状态", "发送状态"]);
       if (sentStatus && isSentMarker(sentStatus)) {
         skippedCount++;
-        continue; // 跳过已发送的行
+        continue;
       }
 
-      // Support multiple column name formats
+      // 读取字段
       const email = getColumnValue(row, ["Email", "email", "邮箱", "收件人", "to", "邮件地址"]);
-      const contactName = getColumnValue(row, ["Contact Name", "联系人", "姓名", "Name", "收件人姓名"]) || "";
-      const audienceType = getColumnValue(row, ["Audience Type", "受众类型", "类型", "Type"]) || "";
-      const phase = getColumnValue(row, ["Phase", "阶段", "phase"]) || "";
-      const subject = getColumnValue(row, ["Subject Line", "Subject", "subject", "主题", "标题", "邮件主题"]);
+      const contactName = getColumnValue(row, ["Contact Name", "联系人", "姓名", "Name"]) || "";
+      const audienceType = getColumnValue(row, ["Audience Type", "受众类型", "类型"]) || "";
+      const phase = getColumnValue(row, ["Phase", "阶段"]) || "";
+      const subject = getColumnValue(row, ["Subject Line", "Subject", "主题", "标题"]);
       const sendDate = getColumnValue(row, ["Send Date", "发送日期", "日期", "Date"]) || "";
       const sendTime = getColumnValue(row, ["Send Time", "发送时间", "时间", "Time"]) || "";
-      const day = getColumnValue(row, ["Day", "星期", "day", "周几"]) || "";
-      const content = getColumnValue(row, ["Email Body", "content", "内容", "正文", "Content", "body", "邮件内容"]);
+      const day = getColumnValue(row, ["Day", "星期", "周几"]) || "";
+      const content = getColumnValue(row, ["Email Body", "content", "内容", "正文", "Content"]);
 
+      // 验证必填字段
       if (!email) {
-        errors.push(`Row ${rowNum}: Missing email address`);
+        errors.push(`Row ${rowNum}: Missing email`);
         continue;
       }
-
       if (!isValidEmail(email)) {
-        errors.push(`Row ${rowNum}: Invalid email format: ${email}`);
+        errors.push(`Row ${rowNum}: Invalid email: ${email}`);
         continue;
       }
-
       if (!subject) {
         errors.push(`Row ${rowNum}: Missing subject`);
         continue;
       }
-
       if (!content) {
         errors.push(`Row ${rowNum}: Missing content`);
         continue;
       }
 
-      // 根据 sendDate 和 sendTime 计算发送计划
+      // 计算发送时间
       const schedule = calculateSchedule(sendDate, sendTime);
 
       tasks.push({
         to: email,
-        contactName: contactName,
-        audienceType: audienceType,
-        phase: phase,
-        subject: subject,
-        sendDate: sendDate,
-        sendTime: sendTime,
+        contactName,
+        audienceType,
+        phase,
+        subject,
+        sendDate: String(sendDate),
+        sendTime: String(sendTime),
         sendDateTimeBeijing: schedule.beijingTimeStr,
-        day: day,
-        content: content,
+        day,
+        content,
         delayHours: schedule.delayHours,
         scheduledTimestamp: schedule.scheduledTimestamp,
       });
@@ -109,10 +296,7 @@ export function parseExcelBuffer(buffer: Buffer): ParseResult {
     }
 
     if (tasks.length === 0) {
-      return {
-        success: false,
-        error: `No valid email tasks found. Errors: ${errors.join("; ")}`,
-      };
+      return { success: false, error: `No valid tasks. ${errors.join("; ")}` };
     }
 
     return { success: true, tasks };
@@ -132,208 +316,10 @@ function getColumnValue(row: Record<string, unknown>, possibleNames: string[]): 
 }
 
 function isValidEmail(email: string): boolean {
-  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-  return emailRegex.test(email);
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
 }
 
-// 检测已发送标记
 function isSentMarker(value: string): boolean {
-  const normalizedValue = value.toLowerCase().trim();
-  const sentMarkers = [
-    "已发送", "sent", "yes", "y", "true", "1", "✓", "✔", "done", "completed", "发送成功"
-  ];
-  return sentMarkers.includes(normalizedValue);
-}
-
-// 判断是否为美国夏令时（大约3月第二个周日到11月第一个周日）
-function isPacificDST(year: number, month: number, day: number): boolean {
-  // 简化判断：3月15日-11月1日期间使用PDT
-  if (month > 3 && month < 11) return true;
-  if (month === 3 && day >= 15) return true;
-  if (month === 11 && day < 7) return true;
-  return false;
-}
-
-// 格式化时间戳为北京时间字符串
-function formatToBeijingTime(timestamp: number): string {
-  // 北京时间 = UTC+8
-  const beijingDate = new Date(timestamp + 8 * 60 * 60 * 1000);
-  const year = beijingDate.getUTCFullYear();
-  const month = String(beijingDate.getUTCMonth() + 1).padStart(2, '0');
-  const day = String(beijingDate.getUTCDate()).padStart(2, '0');
-  const hours = String(beijingDate.getUTCHours()).padStart(2, '0');
-  const minutes = String(beijingDate.getUTCMinutes()).padStart(2, '0');
-  return `${year}-${month}-${day} ${hours}:${minutes}`;
-}
-
-interface ScheduleResult {
-  delayHours: number;
-  scheduledTimestamp: number;
-  beijingTimeStr: string;
-}
-
-// 将 Excel 序列号转换为日期
-function excelSerialToDate(serial: number): Date {
-  // Excel 日期序列号：从 1900-01-01 开始的天数
-  // 但有一个bug：Excel 错误地认为 1900 年是闰年，所以要减 1
-  const excelEpoch = new Date(1899, 11, 30); // 1899-12-30
-  return new Date(excelEpoch.getTime() + serial * 24 * 60 * 60 * 1000);
-}
-
-// 将 Excel 时间序列号转换为小时和分钟
-function excelSerialToTime(serial: number): { hours: number; minutes: number } {
-  // Excel 时间是小数部分，1.0 = 24小时
-  const totalMinutes = Math.round(serial * 24 * 60);
-  return {
-    hours: Math.floor(totalMinutes / 60),
-    minutes: totalMinutes % 60,
-  };
-}
-
-// 根据发送日期和时间计算发送计划
-// 注意：表格中的时间是美西时间 (Pacific Time)，转换为北京时间进行显示和计算
-function calculateSchedule(sendDate: string, sendTime: string): ScheduleResult {
-  const now = Date.now();
-
-  console.log(`[calculateSchedule] 输入: sendDate="${sendDate}", sendTime="${sendTime}"`);
-
-  if (!sendDate) {
-    console.log(`[calculateSchedule] sendDate 为空，立即发送`);
-    return { delayHours: 0, scheduledTimestamp: now, beijingTimeStr: formatToBeijingTime(now) };
-  }
-
-  try {
-    let dateStr = sendDate.trim();
-    let timeStr = sendTime ? sendTime.trim() : "00:00";
-
-    // 解析日期部分
-    let year: number, month: number, day: number;
-    let hours = 0, minutes = 0;
-
-    // 检查是否是 Excel 序列号（纯数字）
-    const numericDate = parseFloat(dateStr);
-    if (!isNaN(numericDate) && numericDate > 1000 && numericDate < 100000) {
-      // 这是 Excel 日期序列号
-      console.log(`[calculateSchedule] 检测到 Excel 日期序列号: ${numericDate}`);
-      const excelDate = excelSerialToDate(Math.floor(numericDate));
-      year = excelDate.getFullYear();
-      month = excelDate.getMonth() + 1;
-      day = excelDate.getDate();
-
-      // 如果日期包含小数部分，那是时间
-      const timePart = numericDate - Math.floor(numericDate);
-      if (timePart > 0) {
-        const time = excelSerialToTime(timePart);
-        hours = time.hours;
-        minutes = time.minutes;
-        console.log(`[calculateSchedule] Excel 日期包含时间部分: ${hours}:${minutes}`);
-      }
-    } else {
-      // 尝试解析不同的日期格式
-      // 格式1: YYYY-MM-DD 或 YYYY/MM/DD 或 YYYY/M/D
-      const isoMatch = dateStr.match(/^(\d{4})[-\/](\d{1,2})[-\/](\d{1,2})$/);
-      if (isoMatch) {
-        year = parseInt(isoMatch[1], 10);
-        month = parseInt(isoMatch[2], 10);
-        day = parseInt(isoMatch[3], 10);
-        console.log(`[calculateSchedule] 匹配 YYYY/MM/DD 格式`);
-      } else {
-        // 格式2: MM/DD/YYYY 或 DD/MM/YYYY（假设 MM/DD/YYYY）
-        const usMatch = dateStr.match(/^(\d{1,2})[-\/](\d{1,2})[-\/](\d{4})$/);
-        if (usMatch) {
-          month = parseInt(usMatch[1], 10);
-          day = parseInt(usMatch[2], 10);
-          year = parseInt(usMatch[3], 10);
-          console.log(`[calculateSchedule] 匹配 MM/DD/YYYY 格式`);
-        } else {
-          // 格式3: 尝试直接解析
-          const fallbackDate = new Date(dateStr);
-          if (!isNaN(fallbackDate.getTime())) {
-            year = fallbackDate.getFullYear();
-            month = fallbackDate.getMonth() + 1;
-            day = fallbackDate.getDate();
-            console.log(`[calculateSchedule] 使用 Date 解析`);
-          } else {
-            console.log(`[calculateSchedule] 无法解析日期: "${dateStr}"，立即发送`);
-            return { delayHours: 0, scheduledTimestamp: now, beijingTimeStr: formatToBeijingTime(now) };
-          }
-        }
-      }
-    }
-
-    console.log(`[calculateSchedule] 解析后日期: ${year}-${month}-${day}`);
-
-    // 解析时间部分（如果还没从 Excel 序列号中解析）
-    // 检查是否是 Excel 时间序列号
-    const numericTime = parseFloat(timeStr);
-    if (!isNaN(numericTime) && numericTime >= 0 && numericTime < 1) {
-      // 这是 Excel 时间序列号 (0-1 之间的小数)
-      console.log(`[calculateSchedule] 检测到 Excel 时间序列号: ${numericTime}`);
-      const time = excelSerialToTime(numericTime);
-      hours = time.hours;
-      minutes = time.minutes;
-    } else if (timeStr && timeStr !== "00:00") {
-      // 尝试 24 小时制 HH:MM 或 HH:MM:SS
-      const time24Match = timeStr.match(/^(\d{1,2}):(\d{2})(?::\d{2})?$/);
-      if (time24Match) {
-        hours = parseInt(time24Match[1], 10);
-        minutes = parseInt(time24Match[2], 10);
-        console.log(`[calculateSchedule] 匹配 24小时制时间: ${hours}:${minutes}`);
-      } else {
-        // 尝试 12 小时制 H:MM AM/PM
-        const time12Match = timeStr.match(/^(\d{1,2}):(\d{2})\s*(AM|PM|am|pm)?$/i);
-        if (time12Match) {
-          hours = parseInt(time12Match[1], 10);
-          minutes = parseInt(time12Match[2], 10);
-          const period = time12Match[3];
-          if (period) {
-            if (period.toLowerCase() === 'pm' && hours !== 12) {
-              hours += 12;
-            } else if (period.toLowerCase() === 'am' && hours === 12) {
-              hours = 0;
-            }
-          }
-          console.log(`[calculateSchedule] 匹配 12小时制时间: ${hours}:${minutes}`);
-        }
-      }
-    }
-
-    console.log(`[calculateSchedule] 最终时间: ${hours}:${minutes}`);
-
-    // 表格时间是美西时间 (Pacific Time)
-    // PDT (夏令时): UTC-7
-    // PST (标准时): UTC-8
-    const isDST = isPacificDST(year, month, day);
-    const pacificOffset = isDST ? 7 : 8; // PDT = UTC-7, PST = UTC-8
-
-    // 创建 UTC 时间戳：Pacific Time + offset = UTC
-    const targetUtc = Date.UTC(year, month - 1, day, hours + pacificOffset, minutes, 0, 0);
-
-    if (isNaN(targetUtc)) {
-      return { delayHours: 0, scheduledTimestamp: now, beijingTimeStr: formatToBeijingTime(now) };
-    }
-
-    const diffMs = targetUtc - now;
-    const diffHours = diffMs / (1000 * 60 * 60);
-
-    console.log(`[calculateSchedule] 目标UTC: ${new Date(targetUtc).toISOString()}`);
-    console.log(`[calculateSchedule] 北京时间: ${formatToBeijingTime(targetUtc)}`);
-    console.log(`[calculateSchedule] 延迟小时: ${diffHours.toFixed(2)}`);
-
-    // 如果是过去的时间，立即发送
-    if (diffHours <= 0) {
-      console.log(`[calculateSchedule] 时间已过，立即发送`);
-      return { delayHours: 0, scheduledTimestamp: now, beijingTimeStr: formatToBeijingTime(now) };
-    }
-
-    console.log(`[calculateSchedule] 定时发送，延迟 ${diffHours.toFixed(2)} 小时`);
-    return {
-      delayHours: Math.round(diffHours * 100) / 100,
-      scheduledTimestamp: targetUtc,
-      beijingTimeStr: formatToBeijingTime(targetUtc),
-    };
-  } catch (err) {
-    console.log(`[calculateSchedule] 解析出错:`, err);
-    return { delayHours: 0, scheduledTimestamp: now, beijingTimeStr: formatToBeijingTime(now) };
-  }
+  const v = value.toLowerCase().trim();
+  return ["已发送", "sent", "yes", "y", "true", "1", "✓", "✔", "done", "completed", "发送成功"].includes(v);
 }

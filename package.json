@@ -9,7 +9,7 @@
     "lint": "next lint"
   },
   "dependencies": {
-    "@supabase/supabase-js": "^2.39.0",
+    "@supabase/supabase-js": "^2.91.0",
     "@types/nodemailer": "^7.0.5",
     "@vercel/kv": "^3.0.0",
     "axios": "^1.6.0",
