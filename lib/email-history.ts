@@ -118,8 +118,11 @@ export async function getEmailSendCounts(
   const counts = new Map<string, number>();
 
   if (!isSupabaseConfigured()) {
+    console.log("getEmailSendCounts: Supabase not configured");
     return counts;
   }
+
+  console.log("getEmailSendCounts: querying for", emails.length, "emails");
 
   const normalizedEmails = emails.map((e) => e.toLowerCase().trim());
 
@@ -129,6 +132,7 @@ export async function getEmailSendCounts(
       .select("email, sent_count")
       .in("email", normalizedEmails);
 
+    console.log("getEmailSendCounts: got", records?.length || 0, "records");
     if (records) {
       for (const record of records) {
         counts.set(record.email, record.sent_count);
@@ -138,6 +142,7 @@ export async function getEmailSendCounts(
     console.error("Failed to get email send counts:", error);
   }
 
+  console.log("getEmailSendCounts: returning", counts.size, "counts");
   return counts;
 }
 
