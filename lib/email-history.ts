@@ -115,21 +115,43 @@ export function recordSentEmails(
   saveEmailHistory(history);
 }
 
-// 检查邮箱是否在历史记录中（返回重复的邮箱列表）
+// 检查邮箱是否超过发送次数限制（默认3次）
+// 返回超过限制的邮箱列表
 export function checkDuplicateEmails(
-  emails: string[]
+  emails: string[],
+  maxSendCount: number = 3
 ): Array<EmailHistoryRecord> {
   const history = loadEmailHistory();
   const duplicates: EmailHistoryRecord[] = [];
 
   for (const email of emails) {
     const normalizedEmail = email.toLowerCase().trim();
-    if (history.records[normalizedEmail]) {
-      duplicates.push(history.records[normalizedEmail]);
+    const record = history.records[normalizedEmail];
+    // 只有当发送次数 >= maxSendCount 时才报警
+    if (record && record.sentCount >= maxSendCount) {
+      duplicates.push(record);
     }
   }
 
   return duplicates;
+}
+
+// 获取邮箱的发送次数（用于显示）
+export function getEmailSendCounts(
+  emails: string[]
+): Map<string, number> {
+  const history = loadEmailHistory();
+  const counts = new Map<string, number>();
+
+  for (const email of emails) {
+    const normalizedEmail = email.toLowerCase().trim();
+    const record = history.records[normalizedEmail];
+    if (record) {
+      counts.set(normalizedEmail, record.sentCount);
+    }
+  }
+
+  return counts;
 }
 
 // 获取历史记录总数
