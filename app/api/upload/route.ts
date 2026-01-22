@@ -61,6 +61,21 @@ export async function POST(request: NextRequest) {
     // 创建 job 数据（返回给客户端保存）
     const job = createJobData(parseResult.tasks, emailConfig);
 
+    // 调试日志：打印前3个任务的时间信息
+    const uploadNow = Date.now();
+    console.log("========== 上传调试 ==========");
+    console.log("当前时间:", uploadNow, new Date(uploadNow).toISOString());
+    job.tasks.slice(0, 3).forEach((task, i) => {
+      console.log(`任务${i}: ${task.to}`);
+      console.log(`  sendDate: "${task.sendDate}", sendTime: "${task.sendTime}"`);
+      console.log(`  scheduledFor: ${task.scheduledFor}`);
+      console.log(`  scheduledFor 时间: ${new Date(task.scheduledFor).toISOString()}`);
+      console.log(`  北京时间: ${task.sendDateTimeBeijing}`);
+      console.log(`  delayHours: ${task.delayHours}`);
+      console.log(`  是否到期: ${task.scheduledFor <= uploadNow}`);
+    });
+    console.log("================================");
+
     // 检测重复邮箱（与历史记录比对，超过3次才报警）
     const emails = parseResult.tasks.map((t) => t.to);
     const duplicates = await checkDuplicateEmails(emails, 3); // 超过3次才报警
