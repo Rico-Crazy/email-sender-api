@@ -172,73 +172,133 @@ interface ScheduleResult {
   beijingTimeStr: string;
 }
 
+// 将 Excel 序列号转换为日期
+function excelSerialToDate(serial: number): Date {
+  // Excel 日期序列号：从 1900-01-01 开始的天数
+  // 但有一个bug：Excel 错误地认为 1900 年是闰年，所以要减 1
+  const excelEpoch = new Date(1899, 11, 30); // 1899-12-30
+  return new Date(excelEpoch.getTime() + serial * 24 * 60 * 60 * 1000);
+}
+
+// 将 Excel 时间序列号转换为小时和分钟
+function excelSerialToTime(serial: number): { hours: number; minutes: number } {
+  // Excel 时间是小数部分，1.0 = 24小时
+  const totalMinutes = Math.round(serial * 24 * 60);
+  return {
+    hours: Math.floor(totalMinutes / 60),
+    minutes: totalMinutes % 60,
+  };
+}
+
 // 根据发送日期和时间计算发送计划
 // 注意：表格中的时间是美西时间 (Pacific Time)，转换为北京时间进行显示和计算
 function calculateSchedule(sendDate: string, sendTime: string): ScheduleResult {
   const now = Date.now();
 
+  console.log(`[calculateSchedule] 输入: sendDate="${sendDate}", sendTime="${sendTime}"`);
+
   if (!sendDate) {
+    console.log(`[calculateSchedule] sendDate 为空，立即发送`);
     return { delayHours: 0, scheduledTimestamp: now, beijingTimeStr: formatToBeijingTime(now) };
   }
 
   try {
-    const dateStr = sendDate.trim();
-    const timeStr = sendTime ? sendTime.trim() : "00:00";
+    let dateStr = sendDate.trim();
+    let timeStr = sendTime ? sendTime.trim() : "00:00";
 
     // 解析日期部分
     let year: number, month: number, day: number;
-
-    // 尝试解析不同的日期格式
-    // 格式1: YYYY-MM-DD 或 YYYY/MM/DD
-    const isoMatch = dateStr.match(/^(\d{4})[-\/](\d{1,2})[-\/](\d{1,2})$/);
-    if (isoMatch) {
-      year = parseInt(isoMatch[1], 10);
-      month = parseInt(isoMatch[2], 10);
-      day = parseInt(isoMatch[3], 10);
-    } else {
-      // 格式2: MM/DD/YYYY 或 DD/MM/YYYY（假设 MM/DD/YYYY）
-      const usMatch = dateStr.match(/^(\d{1,2})[-\/](\d{1,2})[-\/](\d{4})$/);
-      if (usMatch) {
-        month = parseInt(usMatch[1], 10);
-        day = parseInt(usMatch[2], 10);
-        year = parseInt(usMatch[3], 10);
-      } else {
-        // 格式3: DD-Mon-YYYY 或其他格式，尝试直接解析
-        const fallbackDate = new Date(dateStr);
-        if (!isNaN(fallbackDate.getTime())) {
-          year = fallbackDate.getFullYear();
-          month = fallbackDate.getMonth() + 1;
-          day = fallbackDate.getDate();
-        } else {
-          return { delayHours: 0, scheduledTimestamp: now, beijingTimeStr: formatToBeijingTime(now) };
-        }
-      }
-    }
-
-    // 解析时间部分（支持 HH:MM, HH:MM:SS, H:MM AM/PM 等格式）
     let hours = 0, minutes = 0;
 
-    // 尝试 24 小时制 HH:MM 或 HH:MM:SS
-    const time24Match = timeStr.match(/^(\d{1,2}):(\d{2})(?::\d{2})?$/);
-    if (time24Match) {
-      hours = parseInt(time24Match[1], 10);
-      minutes = parseInt(time24Match[2], 10);
+    // 检查是否是 Excel 序列号（纯数字）
+    const numericDate = parseFloat(dateStr);
+    if (!isNaN(numericDate) && numericDate > 1000 && numericDate < 100000) {
+      // 这是 Excel 日期序列号
+      console.log(`[calculateSchedule] 检测到 Excel 日期序列号: ${numericDate}`);
+      const excelDate = excelSerialToDate(Math.floor(numericDate));
+      year = excelDate.getFullYear();
+      month = excelDate.getMonth() + 1;
+      day = excelDate.getDate();
+
+      // 如果日期包含小数部分，那是时间
+      const timePart = numericDate - Math.floor(numericDate);
+      if (timePart > 0) {
+        const time = excelSerialToTime(timePart);
+        hours = time.hours;
+        minutes = time.minutes;
+        console.log(`[calculateSchedule] Excel 日期包含时间部分: ${hours}:${minutes}`);
+      }
     } else {
-      // 尝试 12 小时制 H:MM AM/PM
-      const time12Match = timeStr.match(/^(\d{1,2}):(\d{2})\s*(AM|PM|am|pm)?$/i);
-      if (time12Match) {
-        hours = parseInt(time12Match[1], 10);
-        minutes = parseInt(time12Match[2], 10);
-        const period = time12Match[3];
-        if (period) {
-          if (period.toLowerCase() === 'pm' && hours !== 12) {
-            hours += 12;
-          } else if (period.toLowerCase() === 'am' && hours === 12) {
-            hours = 0;
+      // 尝试解析不同的日期格式
+      // 格式1: YYYY-MM-DD 或 YYYY/MM/DD 或 YYYY/M/D
+      const isoMatch = dateStr.match(/^(\d{4})[-\/](\d{1,2})[-\/](\d{1,2})$/);
+      if (isoMatch) {
+        year = parseInt(isoMatch[1], 10);
+        month = parseInt(isoMatch[2], 10);
+        day = parseInt(isoMatch[3], 10);
+        console.log(`[calculateSchedule] 匹配 YYYY/MM/DD 格式`);
+      } else {
+        // 格式2: MM/DD/YYYY 或 DD/MM/YYYY（假设 MM/DD/YYYY）
+        const usMatch = dateStr.match(/^(\d{1,2})[-\/](\d{1,2})[-\/](\d{4})$/);
+        if (usMatch) {
+          month = parseInt(usMatch[1], 10);
+          day = parseInt(usMatch[2], 10);
+          year = parseInt(usMatch[3], 10);
+          console.log(`[calculateSchedule] 匹配 MM/DD/YYYY 格式`);
+        } else {
+          // 格式3: 尝试直接解析
+          const fallbackDate = new Date(dateStr);
+          if (!isNaN(fallbackDate.getTime())) {
+            year = fallbackDate.getFullYear();
+            month = fallbackDate.getMonth() + 1;
+            day = fallbackDate.getDate();
+            console.log(`[calculateSchedule] 使用 Date 解析`);
+          } else {
+            console.log(`[calculateSchedule] 无法解析日期: "${dateStr}"，立即发送`);
+            return { delayHours: 0, scheduledTimestamp: now, beijingTimeStr: formatToBeijingTime(now) };
           }
         }
       }
     }
+
+    console.log(`[calculateSchedule] 解析后日期: ${year}-${month}-${day}`);
+
+    // 解析时间部分（如果还没从 Excel 序列号中解析）
+    // 检查是否是 Excel 时间序列号
+    const numericTime = parseFloat(timeStr);
+    if (!isNaN(numericTime) && numericTime >= 0 && numericTime < 1) {
+      // 这是 Excel 时间序列号 (0-1 之间的小数)
+      console.log(`[calculateSchedule] 检测到 Excel 时间序列号: ${numericTime}`);
+      const time = excelSerialToTime(numericTime);
+      hours = time.hours;
+      minutes = time.minutes;
+    } else if (timeStr && timeStr !== "00:00") {
+      // 尝试 24 小时制 HH:MM 或 HH:MM:SS
+      const time24Match = timeStr.match(/^(\d{1,2}):(\d{2})(?::\d{2})?$/);
+      if (time24Match) {
+        hours = parseInt(time24Match[1], 10);
+        minutes = parseInt(time24Match[2], 10);
+        console.log(`[calculateSchedule] 匹配 24小时制时间: ${hours}:${minutes}`);
+      } else {
+        // 尝试 12 小时制 H:MM AM/PM
+        const time12Match = timeStr.match(/^(\d{1,2}):(\d{2})\s*(AM|PM|am|pm)?$/i);
+        if (time12Match) {
+          hours = parseInt(time12Match[1], 10);
+          minutes = parseInt(time12Match[2], 10);
+          const period = time12Match[3];
+          if (period) {
+            if (period.toLowerCase() === 'pm' && hours !== 12) {
+              hours += 12;
+            } else if (period.toLowerCase() === 'am' && hours === 12) {
+              hours = 0;
+            }
+          }
+          console.log(`[calculateSchedule] 匹配 12小时制时间: ${hours}:${minutes}`);
+        }
+      }
+    }
+
+    console.log(`[calculateSchedule] 最终时间: ${hours}:${minutes}`);
 
     // 表格时间是美西时间 (Pacific Time)
     // PDT (夏令时): UTC-7
@@ -256,17 +316,24 @@ function calculateSchedule(sendDate: string, sendTime: string): ScheduleResult {
     const diffMs = targetUtc - now;
     const diffHours = diffMs / (1000 * 60 * 60);
 
+    console.log(`[calculateSchedule] 目标UTC: ${new Date(targetUtc).toISOString()}`);
+    console.log(`[calculateSchedule] 北京时间: ${formatToBeijingTime(targetUtc)}`);
+    console.log(`[calculateSchedule] 延迟小时: ${diffHours.toFixed(2)}`);
+
     // 如果是过去的时间，立即发送
     if (diffHours <= 0) {
+      console.log(`[calculateSchedule] 时间已过，立即发送`);
       return { delayHours: 0, scheduledTimestamp: now, beijingTimeStr: formatToBeijingTime(now) };
     }
 
+    console.log(`[calculateSchedule] 定时发送，延迟 ${diffHours.toFixed(2)} 小时`);
     return {
       delayHours: Math.round(diffHours * 100) / 100,
       scheduledTimestamp: targetUtc,
       beijingTimeStr: formatToBeijingTime(targetUtc),
     };
-  } catch {
+  } catch (err) {
+    console.log(`[calculateSchedule] 解析出错:`, err);
     return { delayHours: 0, scheduledTimestamp: now, beijingTimeStr: formatToBeijingTime(now) };
   }
 }
