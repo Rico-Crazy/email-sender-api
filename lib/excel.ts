@@ -88,7 +88,7 @@ function parseDate(dateValue: string | number): { year: number; month: number; d
     return result;
   }
 
-  // 格式: MM/DD/YYYY 或 M/D/YYYY
+  // 格式: MM/DD/YYYY 或 M/D/YYYY (4位年份)
   const usMatch = str.match(/^(\d{1,2})[-\/](\d{1,2})[-\/](\d{4})$/);
   if (usMatch) {
     const result = {
@@ -97,6 +97,21 @@ function parseDate(dateValue: string | number): { year: number; month: number; d
       day: parseInt(usMatch[2], 10),
     };
     console.log(`[parseDate] US format "${str}" -> ${result.year}-${result.month}-${result.day}`);
+    return result;
+  }
+
+  // 格式: MM/DD/YY 或 M/D/YY (2位年份)
+  const usShortMatch = str.match(/^(\d{1,2})[-\/](\d{1,2})[-\/](\d{2})$/);
+  if (usShortMatch) {
+    let year = parseInt(usShortMatch[3], 10);
+    // 假设 00-99 对应 2000-2099
+    year = year + 2000;
+    const result = {
+      year,
+      month: parseInt(usShortMatch[1], 10),
+      day: parseInt(usShortMatch[2], 10),
+    };
+    console.log(`[parseDate] US short format "${str}" -> ${result.year}-${result.month}-${result.day}`);
     return result;
   }
 
