@@ -14,13 +14,23 @@ interface EmailHistoryData {
   lastUpdated: number;
 }
 
-const HISTORY_FILE = path.join(process.cwd(), "data", "email-history.json");
+// Vercel 环境使用 /tmp，本地开发使用 data 目录
+const isVercel = process.env.VERCEL === "1";
+const HISTORY_FILE = isVercel
+  ? "/tmp/email-history.json"
+  : path.join(process.cwd(), "data", "email-history.json");
 
 // 确保数据目录存在
 function ensureDataDir() {
+  if (isVercel) return; // Vercel 的 /tmp 目录已存在
+
   const dataDir = path.dirname(HISTORY_FILE);
-  if (!fs.existsSync(dataDir)) {
-    fs.mkdirSync(dataDir, { recursive: true });
+  try {
+    if (!fs.existsSync(dataDir)) {
+      fs.mkdirSync(dataDir, { recursive: true });
+    }
+  } catch (error) {
+    console.error("Failed to create data directory:", error);
   }
 }
 
@@ -44,6 +54,7 @@ function saveEmailHistory(data: EmailHistoryData) {
   try {
     fs.writeFileSync(HISTORY_FILE, JSON.stringify(data, null, 2), "utf-8");
   } catch (error) {
+    // 在 Vercel 环境中，/tmp 可能偶尔不可用，静默失败
     console.error("Failed to save email history:", error);
   }
 }
