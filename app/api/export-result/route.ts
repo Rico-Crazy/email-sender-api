@@ -134,18 +134,20 @@ export async function POST(request: NextRequest) {
       XLSX.utils.book_append_sheet(workbook, failedSheet, "失败列表");
     }
 
-    // 生成 buffer
-    const buffer = XLSX.write(workbook, { type: "buffer", bookType: "xlsx" });
+    // 生成二进制数组 (使用 array 类型以确保 Vercel 环境兼容性)
+    const arrayBuffer = XLSX.write(workbook, { type: "array", bookType: "xlsx" });
+    const uint8Array = new Uint8Array(arrayBuffer);
 
     // 生成文件名
     const timestamp = new Date().toISOString().slice(0, 19).replace(/[:-]/g, "");
     const filename = `send-result-${timestamp}.xlsx`;
 
-    return new NextResponse(buffer, {
+    return new NextResponse(uint8Array, {
       headers: {
         "Content-Type":
           "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         "Content-Disposition": `attachment; filename="${filename}"`,
+        "Content-Length": uint8Array.length.toString(),
       },
     });
   } catch (error) {

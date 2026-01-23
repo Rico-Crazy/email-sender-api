@@ -63,15 +63,17 @@ export async function GET() {
 
     XLSX.utils.book_append_sheet(workbook, worksheet, "邮件名单");
 
-    // 生成 buffer
-    const buffer = XLSX.write(workbook, { type: "buffer", bookType: "xlsx" });
+    // 生成二进制数组 (使用 array 类型以确保 Vercel 环境兼容性)
+    const arrayBuffer = XLSX.write(workbook, { type: "array", bookType: "xlsx" });
+    const uint8Array = new Uint8Array(arrayBuffer);
 
     // 返回文件
-    return new NextResponse(buffer, {
+    return new NextResponse(uint8Array, {
       headers: {
         "Content-Type":
           "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         "Content-Disposition": 'attachment; filename="email-template.xlsx"',
+        "Content-Length": uint8Array.length.toString(),
       },
     });
   } catch (error) {
