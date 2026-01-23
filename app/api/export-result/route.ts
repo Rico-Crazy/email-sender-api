@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import * as XLSX from "xlsx";
 
+// 强制使用 Node.js runtime
+export const runtime = "nodejs";
+
 interface SendResultItem {
   email: string;
   contactName: string;
@@ -134,21 +137,18 @@ export async function POST(request: NextRequest) {
       XLSX.utils.book_append_sheet(workbook, failedSheet, "失败列表");
     }
 
-    // 生成二进制数组 (使用 array 类型以确保 Vercel 环境兼容性)
-    const arrayBuffer = XLSX.write(workbook, { type: "array", bookType: "xlsx" });
-    const uint8Array = new Uint8Array(arrayBuffer);
+    // 生成 base64 编码的数据
+    const base64Data = XLSX.write(workbook, { type: "base64", bookType: "xlsx" });
 
     // 生成文件名
     const timestamp = new Date().toISOString().slice(0, 19).replace(/[:-]/g, "");
     const filename = `send-result-${timestamp}.xlsx`;
 
-    return new NextResponse(uint8Array, {
-      headers: {
-        "Content-Type":
-          "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        "Content-Disposition": `attachment; filename="${filename}"`,
-        "Content-Length": uint8Array.length.toString(),
-      },
+    // 返回 JSON 格式，包含 base64 数据
+    return NextResponse.json({
+      data: base64Data,
+      filename: filename,
+      contentType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     });
   } catch (error) {
     console.error("Export error:", error);

@@ -328,6 +328,26 @@ export default function Home() {
     }
   };
 
+  // 将 base64 转换为 Blob 并下载
+  const downloadBase64File = (base64Data: string, filename: string, contentType: string) => {
+    const byteCharacters = atob(base64Data);
+    const byteNumbers = new Array(byteCharacters.length);
+    for (let i = 0; i < byteCharacters.length; i++) {
+      byteNumbers[i] = byteCharacters.charCodeAt(i);
+    }
+    const byteArray = new Uint8Array(byteNumbers);
+    const blob = new Blob([byteArray], { type: contentType });
+
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
   const handleExportResult = async () => {
     if (sendResults.length === 0) return;
 
@@ -343,17 +363,26 @@ export default function Home() {
 
       if (!response.ok) throw new Error("导出失败");
 
-      const blob = await response.blob();
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `send-result-${new Date().toISOString().slice(0, 10)}.xlsx`;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
+      const result = await response.json();
+      if (result.error) throw new Error(result.error);
+
+      downloadBase64File(result.data, result.filename, result.contentType);
     } catch (error) {
       alert("导出失败");
+    }
+  };
+
+  const handleDownloadTemplate = async () => {
+    try {
+      const response = await fetch("/api/template");
+      if (!response.ok) throw new Error("下载失败");
+
+      const result = await response.json();
+      if (result.error) throw new Error(result.error);
+
+      downloadBase64File(result.data, result.filename, result.contentType);
+    } catch (error) {
+      alert("下载模板失败");
     }
   };
 
@@ -546,9 +575,9 @@ export default function Home() {
           />
           <p className="text-xs text-gray-500 mt-1">
             Excel 需包含列：Email, Contact Name, Audience Type, Phase, Subject Line, Send Date, Send Time, Day, Email Body, Sent Status | {" "}
-            <a href="/api/template" className="text-blue-500 hover:text-blue-700 underline" download="email-template.xlsx">
+            <button type="button" onClick={handleDownloadTemplate} className="text-blue-500 hover:text-blue-700 underline">
               下载模板
-            </a>
+            </button>
           </p>
           <p className="text-xs text-gray-500 mt-1">
             已发送标记的行会自动跳过 | 同一邮箱超过3次发送才会警告
