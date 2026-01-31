@@ -2,7 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { parseExcelBuffer } from "@/lib/excel";
 import { createJobData } from "@/lib/storage";
 import type { EmailConfig } from "@/lib/gmail";
-import { checkDuplicateEmails, getEmailSendCounts, type EmailHistoryRecord } from "@/lib/email-history";
+import { checkDuplicateEmails, getEmailSendCounts } from "@/lib/email-history";
+import { saveScheduledEmails } from "@/lib/scheduled-emails";
 
 export async function POST(request: NextRequest) {
   try {
@@ -99,6 +100,30 @@ export async function POST(request: NextRequest) {
     const scheduledCount = job.tasks.filter(t => t.scheduledFor > now).length;
     const maxDelay = Math.max(...parseResult.tasks.map(t => t.delayHours), 0);
 
+    // 将定时任务保存到数据库（用于自动发送）
+    let scheduledSaveResult: { success: boolean; savedCount: number; error?: string } = { success: false, savedCount: 0 };
+    if (emailConfig && scheduledCount > 0) {
+      // 只保存定时任务（未到期的），到期的任务由前端手动发送
+      const scheduledTasks = parseResult.tasks
+        .filter(t => t.scheduledTimestamp > now)
+        .map(t => ({
+          jobId: job.id,
+          to: t.to,
+          contactName: t.contactName,
+          subject: t.subject,
+          content: t.content,
+          sendDate: t.sendDate,
+          sendTime: t.sendTime,
+          scheduledFor: t.scheduledTimestamp,
+          emailConfig,
+        }));
+
+      if (scheduledTasks.length > 0) {
+        scheduledSaveResult = await saveScheduledEmails(scheduledTasks);
+        console.log(`[Upload] Saved ${scheduledSaveResult.savedCount} scheduled tasks to database`);
+      }
+    }
+
     return NextResponse.json({
       success: true,
       job, // 返回完整的 job 数据给客户端
@@ -107,13 +132,19 @@ export async function POST(request: NextRequest) {
       scheduledCount,
       maxDelayHours: maxDelay,
       hasCustomEmail: !!emailConfig,
+      // 定时任务保存状态
+      scheduledSaved: scheduledSaveResult.success,
+      scheduledSavedCount: scheduledSaveResult.savedCount,
+      scheduledSaveError: scheduledSaveResult.error || undefined,
       // 重复邮箱警告（超过3次的）
       duplicates: duplicates.length > 0 ? duplicates : undefined,
       inFileDuplicates: inFileDuplicates.length > 0 ? inFileDuplicates : undefined,
       // 所有邮箱的历史发送次数
       emailSendCounts: Object.keys(emailSendCounts).length > 0 ? emailSendCounts : undefined,
       message: scheduledCount > 0
-        ? `任务已创建，包含 ${job.tasks.length} 封邮件：${immediateCount} 封立即发送，${scheduledCount} 封延迟发送（最长 ${maxDelay} 小时）`
+        ? scheduledSaveResult.success
+          ? `任务已创建：${immediateCount} 封可立即发送，${scheduledSaveResult.savedCount} 封已加入定时队列（系统将自动发送）`
+          : `任务已创建：${immediateCount} 封可立即发送，${scheduledCount} 封定时发送（保存失败：${scheduledSaveResult.error}）`
         : `任务已创建，包含 ${job.tasks.length} 封邮件，可立即发送`,
     });
   } catch (error) {

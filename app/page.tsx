@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo, useRef } from "react";
+import { useState, useMemo, useRef, useEffect } from "react";
 
 interface StoredTask {
   to: string;
@@ -63,6 +63,19 @@ interface UploadResult {
   duplicates?: EmailHistoryRecord[];
   inFileDuplicates?: InFileDuplicate[];
   emailSendCounts?: Record<string, number>;
+  // 定时任务保存状态
+  scheduledSaved?: boolean;
+  scheduledSavedCount?: number;
+  scheduledSaveError?: string;
+}
+
+interface ScheduledStats {
+  total: number;
+  pending: number;
+  sent: number;
+  failed: number;
+  nextDue?: number;
+  nextDueTime?: string;
 }
 
 interface SendResultItem {
@@ -119,6 +132,10 @@ export default function Home() {
   // AbortController for cancelling
   const abortControllerRef = useRef<AbortController | null>(null);
 
+  // 定时任务状态
+  const [scheduledStats, setScheduledStats] = useState<ScheduledStats | null>(null);
+  const [loadingStats, setLoadingStats] = useState(false);
+
   const getEmailConfig = () => {
     if (selectedProvider === "gmail" && gmailUser && gmailPass) {
       return {
@@ -138,6 +155,105 @@ export default function Home() {
     }
     return null;
   };
+
+  // 获取定时任务状态
+  const fetchScheduledStats = async () => {
+    setLoadingStats(true);
+    try {
+      const response = await fetch("/api/scheduled");
+      const data = await response.json();
+      if (data.success) {
+        setScheduledStats(data.stats);
+      }
+    } catch (error) {
+      console.error("Failed to fetch scheduled stats:", error);
+    } finally {
+      setLoadingStats(false);
+    }
+  };
+
+  // 定期刷新定时任务状态（每 30 秒）
+  const REFRESH_INTERVAL = 30000;
+
+  // 自动发送定时邮件的间隔（每 60 秒检查一次）
+  const AUTO_SEND_INTERVAL = 60000;
+
+  // 自动定时发送状态
+  const [autoSendEnabled, setAutoSendEnabled] = useState(false);
+  const [lastAutoCheck, setLastAutoCheck] = useState<number | null>(null);
+  const [autoSendLog, setAutoSendLog] = useState<string[]>([]);
+  const autoSendRef = useRef<NodeJS.Timeout | null>(null);
+
+  // 自动发送到期邮件
+  const autoSendDueEmails = async () => {
+    if (!currentJob || sending) return;
+
+    const now = Date.now();
+    setLastAutoCheck(now);
+
+    // 找出所有已选中且到期的待发邮件
+    const dueEmails = currentJob.tasks.filter(
+      (t) => t.status === "pending" && selectedEmails.has(t.to) && t.scheduledFor <= now
+    );
+
+    if (dueEmails.length === 0) {
+      return;
+    }
+
+    const logMsg = `[${new Date().toLocaleTimeString()}] 发现 ${dueEmails.length} 封到期邮件，开始发送...`;
+    setAutoSendLog((prev) => [...prev.slice(-9), logMsg]);
+
+    // 触发发送（只发送到期的）
+    await handleSend(false);
+  };
+
+  // 启动/停止自动发送
+  const toggleAutoSend = () => {
+    if (autoSendEnabled) {
+      // 停止
+      if (autoSendRef.current) {
+        clearInterval(autoSendRef.current);
+        autoSendRef.current = null;
+      }
+      setAutoSendEnabled(false);
+      setAutoSendLog((prev) => [...prev, `[${new Date().toLocaleTimeString()}] 自动发送已停止`]);
+    } else {
+      // 启动
+      setAutoSendEnabled(true);
+      setAutoSendLog((prev) => [...prev, `[${new Date().toLocaleTimeString()}] 自动发送已启动，每分钟检查一次`]);
+      // 立即检查一次
+      autoSendDueEmails();
+      // 设置定时器
+      autoSendRef.current = setInterval(autoSendDueEmails, AUTO_SEND_INTERVAL);
+    }
+  };
+
+  // 清理定时器
+  useEffect(() => {
+    return () => {
+      if (autoSendRef.current) {
+        clearInterval(autoSendRef.current);
+      }
+    };
+  }, []);
+
+  // 当 job 变化时，如果自动发送开启，重新检查
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (autoSendEnabled && currentJob) {
+      autoSendDueEmails();
+    }
+  }, [currentJob?.tasks]);
+
+  useEffect(() => {
+    // 初始加载定时任务统计
+    fetchScheduledStats();
+
+    // 定期刷新
+    const interval = setInterval(fetchScheduledStats, REFRESH_INTERVAL);
+
+    return () => clearInterval(interval);
+  }, []);
 
   // 重复邮箱集合（超过3次的）
   const duplicateEmailSet = useMemo(() => {
@@ -634,12 +750,16 @@ export default function Home() {
               <p>任务 ID: {currentJob?.id}</p>
               <p>邮件数量: {uploadResult.taskCount}</p>
               <p className="text-green-700 mt-2">{uploadResult.message}</p>
+              {uploadResult.scheduledSaveError && (
+                <p className="text-red-600 mt-2">定时任务保存失败: {uploadResult.scheduledSaveError}</p>
+              )}
             </>
           ) : (
             <p className="text-red-600">{uploadResult.error}</p>
           )}
         </div>
       )}
+
 
       {/* 发送进度条 */}
       {sending && sendProgress && (
@@ -789,6 +909,48 @@ export default function Home() {
                 )}
               </p>
             </div>
+
+            {/* 自动定时发送控制 */}
+            {scheduledCount > 0 && (
+              <div className={`p-3 rounded-lg border ${autoSendEnabled ? "bg-green-50 border-green-300" : "bg-gray-50 border-gray-200"}`}>
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="font-medium text-sm">
+                      {autoSendEnabled ? "🟢 自动定时发送已开启" : "⏰ 自动定时发送"}
+                    </p>
+                    <p className="text-xs text-gray-500 mt-1">
+                      {autoSendEnabled
+                        ? "系统每分钟检查并自动发送到期邮件（请保持页面打开）"
+                        : "开启后，系统将在邮件到期时自动发送"}
+                    </p>
+                  </div>
+                  <button
+                    onClick={toggleAutoSend}
+                    disabled={sending}
+                    className={`px-4 py-2 rounded-lg text-sm font-medium ${
+                      autoSendEnabled
+                        ? "bg-red-500 text-white hover:bg-red-600"
+                        : "bg-green-500 text-white hover:bg-green-600"
+                    } disabled:opacity-50`}
+                  >
+                    {autoSendEnabled ? "停止" : "开启自动发送"}
+                  </button>
+                </div>
+                {lastAutoCheck && (
+                  <p className="text-xs text-gray-400 mt-2">
+                    上次检查: {new Date(lastAutoCheck).toLocaleTimeString()}
+                  </p>
+                )}
+                {autoSendLog.length > 0 && (
+                  <div className="mt-2 text-xs text-gray-600 max-h-20 overflow-y-auto bg-white p-2 rounded border">
+                    {autoSendLog.map((log, i) => (
+                      <div key={i}>{log}</div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
             <div className="flex gap-2 justify-end">
               {dueCount > 0 && (
                 <button
