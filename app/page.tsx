@@ -961,17 +961,31 @@ export default function Home() {
                   发送到期的 {dueCount} 封
                 </button>
               )}
-              <button
-                onClick={() => handleSend(true)}
-                disabled={sending || selectedCount === 0}
-                className="bg-blue-500 text-white px-4 py-2 rounded-lg disabled:opacity-50 hover:bg-blue-600"
-              >
-                立即发送所有 {selectedCount} 封
-              </button>
+              {scheduledCount > 0 ? (
+                <button
+                  onClick={() => {
+                    if (confirm(`有 ${scheduledCount} 封邮件尚未到发送时间，确定要忽略定时立即发送吗？\n\n建议：开启上方的「自动定时发送」功能，系统会在到期时自动发送。`)) {
+                      handleSend(true);
+                    }
+                  }}
+                  disabled={sending || selectedCount === 0}
+                  className="bg-orange-500 text-white px-4 py-2 rounded-lg disabled:opacity-50 hover:bg-orange-600"
+                >
+                  忽略定时，立即发送 {selectedCount} 封
+                </button>
+              ) : (
+                <button
+                  onClick={() => handleSend(true)}
+                  disabled={sending || selectedCount === 0}
+                  className="bg-blue-500 text-white px-4 py-2 rounded-lg disabled:opacity-50 hover:bg-blue-600"
+                >
+                  立即发送所有 {selectedCount} 封
+                </button>
+              )}
             </div>
-            {scheduledCount > 0 && dueCount === 0 && (
-              <p className="text-sm text-yellow-600 text-right">
-                所有选中邮件都未到发送时间，可使用「立即发送所有」忽略定时
+            {scheduledCount > 0 && dueCount === 0 && !autoSendEnabled && (
+              <p className="text-sm text-green-600 text-right font-medium">
+                👆 请开启上方的「自动定时发送」功能，系统会在到期时自动发送
               </p>
             )}
           </div>
